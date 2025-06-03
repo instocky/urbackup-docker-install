@@ -4,25 +4,31 @@
 
 ## 🚀 Быстрая установка
 
-### Автоматическая установка одной командой:
+### Полностью автоматическая установка (рекомендуется):
 ```bash
-curl -sSL https://raw.githubusercontent.com/ваш_username/urbackup-docker-auto-install/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/instocky/urbackup-docker-install/main/install-auto.sh | sudo bash
+```
+**Эта команда автоматически:**
+- Создает пользователя `urbackup` с случайным паролем
+- Устанавливает Docker и UrBackup от созданного пользователя  
+- Настраивает все сервисы и firewall
+- Показывает финальную информацию с паролем пользователя
+
+### Ручная установка от существующего пользователя:
+```bash
+curl -sSL https://raw.githubusercontent.com/instocky/urbackup-docker-install/main/install.sh | bash
 ```
 
 ### С дополнительными параметрами:
 ```bash
 # Пропустить настройку UFW firewall
-SKIP_UFW=yes curl -sSL https://raw.githubusercontent.com/ваш_username/urbackup-docker-auto-install/main/install.sh | bash
+SKIP_UFW=yes curl -sSL https://raw.githubusercontent.com/instocky/urbackup-docker-install/main/install-auto.sh | sudo bash
+
+# Создать пользователя с другим именем
+URBACKUP_USER=backup curl -sSL https://raw.githubusercontent.com/instocky/urbackup-docker-install/main/install-auto.sh | sudo bash
 
 # Задать кастомные порты
-URBACKUP_WEB_PORT=8080 curl -sSL https://raw.githubusercontent.com/ваш_username/urbackup-docker-auto-install/main/install.sh | bash
-```
-
-### Или скачать и запустить:
-```bash
-wget https://raw.githubusercontent.com/ваш_username/urbackup-docker-auto-install/main/install.sh
-chmod +x install.sh
-./install.sh
+URBACKUP_WEB_PORT=8080 curl -sSL https://raw.githubusercontent.com/instocky/urbackup-docker-install/main/install-auto.sh | sudo bash
 ```
 
 ## 📋 Что устанавливается
