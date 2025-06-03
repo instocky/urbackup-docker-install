@@ -1,0 +1,37 @@
+# Docker
+docker-compose.yml
+.env
+
+# UrBackup data directories
+urbackup/
+*.tar.gz
+
+# Control script (generated)
+urbackup-control.sh
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
