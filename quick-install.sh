@@ -24,6 +24,9 @@ fi
 # Install Docker if needed
 if ! command -v docker &> /dev/null; then
     echo -e "${YELLOW}Installing Docker...${NC}"
+    # Fix for Ubuntu 24.04 - use gpg instead of gnupg
+    sudo apt update
+    sudo apt install -y curl wget gpg lsb-release ca-certificates apt-transport-https software-properties-common
     curl -fsSL https://get.docker.com | sh
     sudo usermod -aG docker $USER
 fi

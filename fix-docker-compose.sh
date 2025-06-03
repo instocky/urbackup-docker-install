@@ -13,9 +13,9 @@ sudo apt remove -y docker-compose 2>/dev/null || true
 sudo rm -f /usr/local/bin/docker-compose 2>/dev/null || true
 
 # Install distutils if needed (fallback)
-echo "Installing python3-distutils as fallback..."
+echo "Installing python3-distutils and required packages..."
 sudo apt update
-sudo apt install -y python3-distutils 2>/dev/null || true
+sudo apt install -y python3-distutils curl wget gpg ca-certificates 2>/dev/null || true
 
 # Make sure docker-compose-plugin is installed
 echo "Installing Docker Compose plugin..."

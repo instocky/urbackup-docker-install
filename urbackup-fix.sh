@@ -28,9 +28,9 @@ sudo apt remove -y docker-compose 2>/dev/null || true
 sudo rm -f /usr/local/bin/docker-compose 2>/dev/null || true
 
 # Install distutils as fallback
-echo "📦 Installing python3-distutils..."
+echo "📦 Installing required packages for Ubuntu 24.04..."
 sudo apt update
-sudo apt install -y python3-distutils
+sudo apt install -y python3-distutils curl wget gpg ca-certificates
 
 # Install Docker Compose plugin
 echo "🐳 Installing Docker Compose plugin..."

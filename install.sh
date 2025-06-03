@@ -154,7 +154,7 @@ update_system() {
     sudo apt install -y -qq \
         curl \
         wget \
-        gnupg \
+        gpg \
         lsb-release \
         ca-certificates \
         apt-transport-https \

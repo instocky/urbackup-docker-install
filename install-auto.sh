@@ -191,7 +191,7 @@ show_progress 1 10 "Обновление списка пакетов"
 sudo apt update -qq
 
 show_progress 2 10 "Установка базовых пакетов"
-sudo apt install -y -qq curl wget gnupg lsb-release ca-certificates apt-transport-https software-properties-common
+sudo apt install -y -qq curl wget gpg lsb-release ca-certificates apt-transport-https software-properties-common
 
 # Установка Docker
 if ! command -v docker &> /dev/null; then
