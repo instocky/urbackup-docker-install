@@ -28,10 +28,13 @@ if ! command -v docker &> /dev/null; then
     sudo usermod -aG docker $USER
 fi
 
-# Install Docker Compose if needed  
-if ! command -v docker-compose &> /dev/null; then
-    echo -e "${YELLOW}Installing Docker Compose...${NC}"
-    sudo apt update && sudo apt install -y docker-compose
+# Install Docker Compose Plugin if needed  
+if ! docker compose version &> /dev/null; then
+    echo -e "${YELLOW}Installing Docker Compose Plugin...${NC}"
+    sudo apt update && sudo apt install -y docker-compose-plugin
+    # Remove old docker-compose
+    sudo apt remove -y docker-compose 2>/dev/null || true
+    sudo rm -f /usr/local/bin/docker-compose 2>/dev/null || true
 fi
 
 # Create working directory
@@ -68,11 +71,11 @@ EOF
 cat > urbackup.sh << 'EOF'
 #!/bin/bash
 case "$1" in
-    start) docker-compose up -d ;;
-    stop) docker-compose down ;;
-    restart) docker-compose restart ;;
-    status) docker-compose ps ;;
-    logs) docker-compose logs -f ;;
+    start) docker compose up -d ;;
+    stop) docker compose down ;;
+    restart) docker compose restart ;;
+    status) docker compose ps ;;
+    logs) docker compose logs -f ;;
     *) echo "Usage: $0 {start|stop|restart|status|logs}" ;;
 esac
 EOF
@@ -82,9 +85,9 @@ chmod +x urbackup.sh
 # Start UrBackup
 echo -e "${YELLOW}Starting UrBackup...${NC}"
 if docker ps &> /dev/null; then
-    docker-compose up -d
+    docker compose up -d
 else
-    sudo docker-compose up -d
+    sudo docker compose up -d
 fi
 
 # Get server IP

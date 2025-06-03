@@ -214,14 +214,24 @@ else
     log_success "Docker уже установлен"
 fi
 
-# Установка Docker Compose
-if ! command -v docker-compose &> /dev/null; then
-    log_step "Установка Docker Compose..."
-    show_progress 6 10 "Установка Docker Compose"
-    sudo apt install -y -qq docker-compose
-    log_success "Docker Compose установлен"
+# Проверка Docker Compose (используем plugin, а не standalone)
+if ! docker compose version &> /dev/null; then
+    log_step "Настройка Docker Compose..."
+    show_progress 6 10 "Проверка Docker Compose Plugin"
+    
+    # Удаляем старый docker-compose если установлен
+    sudo apt remove -y -qq docker-compose 2>/dev/null || true
+    sudo rm -f /usr/local/bin/docker-compose 2>/dev/null || true
+    
+    # Проверяем что plugin установлен с Docker
+    if ! docker compose version &> /dev/null; then
+        log_error "Docker Compose plugin не найден. Переустанавливаем Docker..."
+        sudo apt install -y -qq docker-compose-plugin
+    fi
+    
+    log_success "Docker Compose plugin готов"
 else
-    log_success "Docker Compose уже установлен"
+    log_success "Docker Compose plugin уже установлен"
 fi
 
 # Создание рабочей директории
@@ -286,10 +296,10 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$INSTALL_DIR
-ExecStartPre=/usr/bin/docker-compose pull -q
-ExecStart=/usr/bin/docker-compose up -d
-ExecStop=/usr/bin/docker-compose down
-ExecReload=/usr/bin/docker-compose restart
+ExecStartPre=/usr/bin/docker compose pull -q
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose restart
 TimeoutStartSec=300
 User=$(whoami)
 Group=docker
@@ -326,19 +336,19 @@ show_progress 8 10 "Запуск UrBackup сервера"
 
 # Запуск UrBackup
 log_step "Запуск UrBackup сервера..."
-sudo docker-compose up -d
+sudo docker compose up -d
 
 # Ожидание готовности
 log_info "Ожидание готовности сервиса..."
 sleep 15
 
 # Проверка статуса
-if sudo docker-compose ps | grep -q "Up"; then
+if sudo docker compose ps | grep -q "Up"; then
     show_progress 10 10 "UrBackup сервер готов"
     log_success "UrBackup сервер запущен успешно!"
 else
     log_error "Ошибка запуска контейнера"
-    sudo docker-compose logs
+    sudo docker compose logs
     exit 1
 fi
 
@@ -348,28 +358,28 @@ cat > urbackup-control.sh << 'CONTROL_EOF'
 case "$1" in
     start)
         echo "Запуск UrBackup сервера..."
-        docker-compose up -d
+        docker compose up -d
         ;;
     stop)
         echo "Остановка UrBackup сервера..."
-        docker-compose down
+        docker compose down
         ;;
     restart)
         echo "Перезапуск UrBackup сервера..."
-        docker-compose restart
+        docker compose restart
         ;;
     status)
         echo "Статус UrBackup сервера:"
-        docker-compose ps
+        docker compose ps
         ;;
     logs)
         echo "Логи UrBackup сервера:"
-        docker-compose logs -f
+        docker compose logs -f
         ;;
     update)
         echo "Обновление UrBackup сервера..."
-        docker-compose pull
-        docker-compose up -d
+        docker compose pull
+        docker compose up -d
         ;;
     info)
         SERVER_IP=$(hostname -I | awk '{print $1}')

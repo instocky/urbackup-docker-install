@@ -42,7 +42,7 @@ clean:
 		sudo systemctl disable urbackup-docker.service 2>/dev/null || true; \
 		sudo rm -f /etc/systemd/system/urbackup-docker.service; \
 		sudo systemctl daemon-reload; \
-		docker-compose down --rmi all 2>/dev/null || true; \
+		docker compose down --rmi all 2>/dev/null || true; \
 		rm -rf urbackup/ docker-compose.yml urbackup-control.sh; \
 		echo "UrBackup installation cleaned"; \
 	fi

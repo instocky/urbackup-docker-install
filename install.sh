@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# UrBackup Server Docker Auto Installation Script
-# Ubuntu 24.04 LTS Auto Installer
+# UrBackup Server Docker Installation Script
+# Ubuntu 24.04 LTS - Fixed Docker Compose compatibility
 # Author: DevOps Engineer
 # Date: 2025-06-03
-# Version: 1.0
+# Version: 1.1
 
 set -e
 
@@ -201,6 +201,32 @@ install_docker() {
     log_success "Docker установлен: $(docker --version)"
 }
 
+# Установка Docker Compose Plugin
+install_docker_compose() {
+    log_info "Проверка Docker Compose Plugin..."
+    
+    # Удаляем старый docker-compose если установлен
+    sudo apt remove -y -qq docker-compose 2>/dev/null || true
+    sudo rm -f /usr/local/bin/docker-compose 2>/dev/null || true
+    
+    # Проверяем новый plugin
+    if docker compose version &> /dev/null; then
+        log_success "Docker Compose Plugin уже установлен"
+        return 0
+    fi
+
+    log_info "Установка Docker Compose Plugin..."
+    sudo apt install -y -qq docker-compose-plugin
+    
+    # Проверяем что plugin работает
+    if docker compose version &> /dev/null; then
+        log_success "Docker Compose Plugin установлен"
+    else
+        log_error "Ошибка установки Docker Compose Plugin"
+        exit 1
+    fi
+}
+
 # Создание рабочей директории
 create_working_directory() {
     log_step "Создание рабочей директории..."
@@ -217,7 +243,7 @@ create_working_directory() {
 
 # Создание docker-compose.yml
 create_docker_compose() {
-    log_info "Создание docker-compose.yml..."
+    log_step "Создание конфигурации Docker Compose..."
     
     cat > docker-compose.yml << EOF
 version: '3.8'
@@ -228,9 +254,9 @@ services:
     container_name: urbackup-server
     restart: unless-stopped
     ports:
-      - "55413:55413"   # UrBackup Internet Protocol
-      - "55414:55414"   # Web Interface HTTP
-      - "35623:35623"   # FastCGI
+      - "${URBACKUP_SERVER_PORT}:55413"
+      - "${URBACKUP_WEB_PORT}:55414"
+      - "${URBACKUP_FASTCGI_PORT}:35623"
     volumes:
       - ./urbackup/backups:/var/urbackup:rw
       - ./urbackup/database:/var/lib/urbackup:rw
@@ -241,6 +267,12 @@ services:
       - TZ=Europe/Moscow
     networks:
       - urbackup-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:55414/x?a=status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 networks:
   urbackup-net:
@@ -253,21 +285,27 @@ EOF
 
 # Создание systemd сервиса
 create_systemd_service() {
-    log_info "Создание systemd сервиса..."
+    log_step "Создание systemd сервиса..."
     
     sudo tee /etc/systemd/system/urbackup-docker.service > /dev/null << EOF
 [Unit]
 Description=UrBackup Docker Service
+Documentation=https://urbackup.org/
 Requires=docker.service
-After=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=$(pwd)
-ExecStart=/usr/bin/docker-compose up -d
-ExecStop=/usr/bin/docker-compose down
-TimeoutStartSec=0
+WorkingDirectory=$INSTALL_DIR
+ExecStartPre=/usr/bin/docker compose pull -q
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+ExecReload=/usr/bin/docker compose restart
+TimeoutStartSec=300
+User=$USER
+Group=docker
 
 [Install]
 WantedBy=multi-user.target
@@ -282,143 +320,273 @@ EOF
 
 # Настройка firewall
 configure_firewall() {
-    log_info "Настройка firewall..."
-    
-    if command -v ufw &> /dev/null; then
-        sudo ufw allow 55413/tcp comment 'UrBackup Internet Protocol'
-        sudo ufw allow 55414/tcp comment 'UrBackup Web Interface'
-        sudo ufw allow 35623/tcp comment 'UrBackup FastCGI'
-        log_success "UFW правила добавлены"
-    else
-        log_warning "UFW не установлен, настройте firewall вручную"
+    if [[ "$SKIP_UFW" == "yes" ]]; then
+        log_warning "Настройка UFW пропущена (SKIP_UFW=yes)"
+        return 0
     fi
+    
+    log_step "Настройка UFW firewall..."
+    
+    # Установка UFW если не установлен
+    if ! command -v ufw &> /dev/null; then
+        sudo apt install -y -qq ufw
+    fi
+    
+    # Настройка базовых правил
+    sudo ufw --force reset > /dev/null 2>&1
+    sudo ufw default deny incoming > /dev/null 2>&1
+    sudo ufw default allow outgoing > /dev/null 2>&1
+    
+    # SSH доступ
+    sudo ufw allow ssh > /dev/null 2>&1
+    
+    # UrBackup порты
+    sudo ufw allow $URBACKUP_SERVER_PORT/tcp comment 'UrBackup Internet Protocol' > /dev/null 2>&1
+    sudo ufw allow $URBACKUP_WEB_PORT/tcp comment 'UrBackup Web Interface' > /dev/null 2>&1
+    sudo ufw allow $URBACKUP_FASTCGI_PORT/tcp comment 'UrBackup FastCGI' > /dev/null 2>&1
+    
+    # Включение UFW
+    sudo ufw --force enable > /dev/null 2>&1
+    
+    log_success "UFW настроен и активирован"
 }
 
 # Запуск контейнера
-start_container() {
-    log_info "Запуск UrBackup сервера..."
+start_urbackup() {
+    log_step "Запуск UrBackup сервера..."
+    show_progress 9 10 "Запуск Docker контейнера"
     
-    # Проверка что пользователь в группе docker
-    if ! groups $USER | grep -q docker; then
-        log_warning "Пользователь не в группе docker. Перелогиньтесь или используйте sudo."
-        sudo docker-compose up -d
+    # Проверка доступа к Docker
+    if ! docker ps &> /dev/null; then
+        log_warning "Требуется перелогин для применения прав Docker. Используем sudo..."
+        sudo docker compose up -d
     else
-        docker-compose up -d
+        docker compose up -d
     fi
     
-    # Ожидание запуска
-    log_info "Ожидание запуска сервиса..."
-    sleep 10
+    # Ожидание готовности сервиса
+    log_info "Ожидание готовности сервиса (может занять до 2 минут)..."
+    local max_attempts=40
+    local attempt=1
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if curl -f -s "http://localhost:$URBACKUP_WEB_PORT/x?a=status" > /dev/null 2>&1; then
+            break
+        fi
+        
+        if [[ $((attempt % 5)) -eq 0 ]]; then
+            printf "."
+        fi
+        
+        sleep 3
+        ((attempt++))
+    done
+    
+    echo
     
     # Проверка статуса
-    if docker-compose ps | grep -q "Up"; then
+    if docker compose ps | grep -q "Up"; then
+        show_progress 10 10 "UrBackup сервер готов"
         log_success "UrBackup сервер запущен успешно!"
     else
         log_error "Ошибка запуска контейнера"
-        docker-compose logs
+        echo "Логи контейнера:"
+        docker compose logs --tail=20
         exit 1
     fi
 }
 
 # Создание скрипта управления
 create_management_script() {
-    log_info "Создание скрипта управления..."
+    log_step "Создание скрипта управления..."
     
     cat > urbackup-control.sh << 'EOF'
 #!/bin/bash
 
+# UrBackup Control Script
+# Управление UrBackup сервером
+
+set -e
+
+# Цвета
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+check_compose() {
+    if [[ ! -f "docker-compose.yml" ]]; then
+        log_error "docker-compose.yml не найден. Запустите из директории установки UrBackup."
+        exit 1
+    fi
+}
+
+get_server_ip() {
+    SERVER_IP=$(ip route get 1.1.1.1 | awk '{print $7; exit}' 2>/dev/null || hostname -I | awk '{print $1}')
+}
+
 case "$1" in
     start)
-        echo "Запуск UrBackup сервера..."
-        docker-compose up -d
+        check_compose
+        log_info "Запуск UrBackup сервера..."
+        docker compose up -d
+        log_success "UrBackup сервер запущен"
         ;;
     stop)
-        echo "Остановка UrBackup сервера..."
-        docker-compose down
+        check_compose
+        log_info "Остановка UrBackup сервера..."
+        docker compose down
+        log_success "UrBackup сервер остановлен"
         ;;
     restart)
-        echo "Перезапуск UrBackup сервера..."
-        docker-compose restart
+        check_compose
+        log_info "Перезапуск UrBackup сервера..."
+        docker compose restart
+        log_success "UrBackup сервер перезапущен"
         ;;
     status)
+        check_compose
         echo "Статус UrBackup сервера:"
-        docker-compose ps
+        docker compose ps
+        echo
+        echo "Статус systemd сервиса:"
+        systemctl is-active urbackup-docker.service || true
         ;;
     logs)
-        echo "Логи UrBackup сервера:"
-        docker-compose logs -f
+        check_compose
+        log_info "Логи UrBackup сервера (Ctrl+C для выхода):"
+        docker compose logs -f --tail=50
         ;;
     update)
-        echo "Обновление UrBackup сервера..."
-        docker-compose pull
-        docker-compose up -d
+        check_compose
+        log_info "Обновление UrBackup сервера..."
+        docker compose pull
+        docker compose up -d
+        log_success "UrBackup сервер обновлен"
         ;;
     backup-config)
-        echo "Создание бэкапа конфигурации..."
-        tar -czf "urbackup-config-$(date +%Y%m%d-%H%M%S).tar.gz" urbackup/ docker-compose.yml
-        echo "Бэкап сохранен"
+        check_compose
+        BACKUP_NAME="urbackup-config-$(date +%Y%m%d-%H%M%S).tar.gz"
+        log_info "Создание бэкапа конфигурации..."
+        tar -czf "$BACKUP_NAME" urbackup/ docker-compose.yml urbackup-control.sh 2>/dev/null || true
+        log_success "Бэкап сохранен: $BACKUP_NAME"
+        ;;
+    info)
+        check_compose
+        get_server_ip
+        echo "=========================================="
+        echo "  UrBackup Server Information"
+        echo "=========================================="
+        echo "Web Interface: http://$SERVER_IP:$(grep -A1 'ports:' docker-compose.yml | grep '55414' | cut -d':' -f1 | tr -d ' -')"
+        echo "Server Address: $SERVER_IP"
+        echo "Working Directory: $(pwd)"
+        echo
+        echo "Data Directories:"
+        echo "  Backups:  $(pwd)/urbackup/backups/"
+        echo "  Database: $(pwd)/urbackup/database/"
+        echo "  Config:   $(pwd)/urbackup/config/"
+        echo
+        echo "Management:"
+        echo "  Start:    ./urbackup-control.sh start"
+        echo "  Stop:     ./urbackup-control.sh stop"  
+        echo "  Status:   ./urbackup-control.sh status"
+        echo "  Logs:     ./urbackup-control.sh logs"
+        echo "  Update:   ./urbackup-control.sh update"
         ;;
     *)
-        echo "Использование: $0 {start|stop|restart|status|logs|update|backup-config}"
+        echo "UrBackup Control Script"
+        echo
+        echo "Использование: $0 {command}"
+        echo
+        echo "Commands:"
+        echo "  start         - запуск сервера"
+        echo "  stop          - остановка сервера"
+        echo "  restart       - перезапуск сервера"
+        echo "  status        - статус сервера"
+        echo "  logs          - просмотр логов"
+        echo "  update        - обновление сервера"
+        echo "  backup-config - бэкап конфигурации"
+        echo "  info          - информация о сервере"
+        echo
         exit 1
         ;;
 esac
 EOF
     
     chmod +x urbackup-control.sh
-    log_success "Скрипт управления создан (./urbackup-control.sh)"
+    log_success "Скрипт управления создан"
 }
 
 # Вывод информации о завершении
 print_completion_info() {
+    clear
     echo
     echo "=========================================="
-    log_success "Установка UrBackup завершена успешно!"
+    log_success "🎉 UrBackup установлен успешно! 🎉"
     echo "=========================================="
     echo
-    echo -e "${BLUE}Веб-интерфейс:${NC} http://$SERVER_IP:55414"
-    echo -e "${BLUE}Адрес сервера для клиентов:${NC} $SERVER_IP"
+    echo -e "${BLUE}📍 Веб-интерфейс:${NC}"
+    echo "   http://$SERVER_IP:$URBACKUP_WEB_PORT"
     echo
-    echo -e "${YELLOW}Управление сервером:${NC}"
-    echo "  ./urbackup-control.sh start    - запуск"
-    echo "  ./urbackup-control.sh stop     - остановка"  
-    echo "  ./urbackup-control.sh restart  - перезапуск"
-    echo "  ./urbackup-control.sh status   - статус"
-    echo "  ./urbackup-control.sh logs     - логи"
-    echo "  ./urbackup-control.sh update   - обновление"
+    echo -e "${BLUE}🖥️  Адрес сервера для клиентов:${NC}"
+    echo "   $SERVER_IP"
     echo
-    echo -e "${YELLOW}Директории:${NC}"
-    echo "  $(pwd)/urbackup/backups/  - хранилище бэкапов"
-    echo "  $(pwd)/urbackup/database/ - база данных"
-    echo "  $(pwd)/urbackup/config/   - конфигурация"
+    echo -e "${BLUE}🎛️  Управление сервером:${NC}"
+    echo "   cd $INSTALL_DIR"
+    echo "   ./urbackup-control.sh start      # запуск"
+    echo "   ./urbackup-control.sh stop       # остановка"  
+    echo "   ./urbackup-control.sh restart    # перезапуск"
+    echo "   ./urbackup-control.sh status     # статус"
+    echo "   ./urbackup-control.sh logs       # логи"
+    echo "   ./urbackup-control.sh update     # обновление"
+    echo "   ./urbackup-control.sh info       # информация"
     echo
-    echo -e "${GREEN}Следующие шаги:${NC}"
-    echo "1. Откройте http://$SERVER_IP:55414 в браузере"
+    echo -e "${BLUE}📁 Директории:${NC}"
+    echo "   $INSTALL_DIR/urbackup/backups/   # хранилище бэкапов"
+    echo "   $INSTALL_DIR/urbackup/database/  # база данных"
+    echo "   $INSTALL_DIR/urbackup/config/    # конфигурация"
+    echo
+    echo -e "${YELLOW}🚀 Следующие шаги:${NC}"
+    echo "1. Откройте http://$SERVER_IP:$URBACKUP_WEB_PORT в браузере"
     echo "2. Пройдите мастер первоначальной настройки"
     echo "3. Скачайте клиенты для Windows компьютеров"
     echo "4. Настройте расписания бэкапов"
+    echo
+    echo -e "${GREEN}✨ Установка завершена! Приятного использования! ✨${NC}"
     echo
 }
 
 # Основная функция
 main() {
+    clear
     echo "=========================================="
-    echo "  UrBackup Server Docker Installation"
-    echo "  Ubuntu 24.04 LTS"
+    echo "  🐳 UrBackup Docker Installer v1.1"
+    echo "  Ubuntu 24.04 LTS Compatible"
     echo "=========================================="
     echo
     
     check_root
     check_ubuntu
     get_server_ip
+    check_system_requirements
     
+    update_system
     install_docker
     install_docker_compose
-    create_directories
+    create_working_directory
     create_docker_compose
     create_systemd_service
     configure_firewall
-    start_container
+    start_urbackup
     create_management_script
     
     print_completion_info
